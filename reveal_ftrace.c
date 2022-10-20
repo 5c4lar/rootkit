@@ -6,6 +6,7 @@
 #include <linux/ftrace.h>
 #include <linux/printk.h>
 #include <linux/module.h>
+#include <linux/syscalls.h>
 
 //#define LIST_END_OFFSET 0x7ad125
 //#define OPS_LIST_OFFSET 0x7ad0ed
@@ -60,22 +61,19 @@ void reveal_ftrace(void) {
     typedef struct dyn_ftrace *(* ftrace_rec_iter_record_t)(struct ftrace_rec_iter *iter);
     typedef int (* ftrace_test_record_t)(struct dyn_ftrace *rec, bool enable);
     typedef ftrace_func_t (* ftrace_ops_get_func_t)(struct ftrace_ops *ops);
-//    typedef unsigned long (*ftrace_get_addr_new_t)(struct dyn_ftrace *rec);
-//    typedef unsigned long (*ftrace_get_addr_curr_t)(struct dyn_ftrace *rec);
+    typedef void (*ftrace_release_mod_t)(struct module *mod);
     typedef struct module *(*__module_address_t)(unsigned long addr);
 
     ftrace_rec_iter_start_t ftrace_rec_iter_start = (ftrace_rec_iter_start_t) kallsyms_lookup_name("ftrace_rec_iter_start");
     ftrace_rec_iter_next_t ftrace_rec_iter_next = (ftrace_rec_iter_next_t) kallsyms_lookup_name("ftrace_rec_iter_next");
     ftrace_rec_iter_record_t ftrace_rec_iter_record = (ftrace_rec_iter_record_t) kallsyms_lookup_name("ftrace_rec_iter_record");
     ftrace_ops_get_func_t ftrace_ops_get_func = (ftrace_ops_get_func_t) kallsyms_lookup_name("ftrace_ops_get_func");
-//    ftrace_get_addr_new_t ftrace_get_addr_new = (ftrace_get_addr_new_t) kallsyms_lookup_name("ftrace_get_addr_new");
-//    ftrace_get_addr_curr_t ftrace_get_addr_curr = (ftrace_get_addr_curr_t) kallsyms_lookup_name("ftrace_get_addr_curr");
     __module_address_t __module_address = (__module_address_t) kallsyms_lookup_name("__module_address");
-
+    printk(KERN_DEBUG "scan: finish lookup\n");
     char buf[128];
-    printk(KERN_DEBUG "rootkit: ftrace_rec_iter_start: %lx\n", (size_t)ftrace_rec_iter_start);
-    printk(KERN_DEBUG "rootkit: ftrace_rec_iter_next: %lx\n", (size_t)ftrace_rec_iter_next);
-    printk(KERN_DEBUG "rootkit: ftrace_rec_iter_record: %lx\n", (size_t)ftrace_rec_iter_record);
+    printk(KERN_DEBUG "scan: ftrace_rec_iter_start: %lx\n", (size_t)ftrace_rec_iter_start);
+    printk(KERN_DEBUG "scan: ftrace_rec_iter_next: %lx\n", (size_t)ftrace_rec_iter_next);
+    printk(KERN_DEBUG "scan: ftrace_rec_iter_record: %lx\n", (size_t)ftrace_rec_iter_record);
     // Iterate over all ftrace structs and print them
     for_ftrace_rec_iter(iter) {
         rec = ftrace_rec_iter_record(iter);
@@ -89,20 +87,22 @@ void reveal_ftrace(void) {
     struct ftrace_ops *ftrace_ops_list = *ftrace_ops_list_addr;
     struct ftrace_ops *op;
 
-    printk(KERN_DEBUG "rootkit: ftrace_list_end_addr leak!: %lx\n", (size_t)ftrace_list_end_addr);
-    printk(KERN_DEBUG "rootkit: ftrace_ops_list_addr leak!: %lx\n", (size_t)ftrace_ops_list_addr);
-    printk(KERN_DEBUG "rootkit: ftrace_ops_list leak!: %lx\n", (size_t)ftrace_ops_list);
+    printk(KERN_DEBUG "scan: ftrace_list_end_addr leak!: %lx\n", (size_t)ftrace_list_end_addr);
+    printk(KERN_DEBUG "scan: ftrace_ops_list_addr leak!: %lx\n", (size_t)ftrace_ops_list_addr);
+    printk(KERN_DEBUG "scan: ftrace_ops_list leak!: %lx\n", (size_t)ftrace_ops_list);
     do_for_each_ftrace_op(op, ftrace_ops_list) {
         ftrace_func_t func = ftrace_ops_get_func(op);
-        printk(KERN_DEBUG "rootkit: ftrace_ops_list: %lx, %lx, %lx\n", (size_t)op, (size_t)func, (size_t)op->saved_func);
+        printk(KERN_DEBUG "scan: ftrace_ops_list: %lx, %lx, %lx\n", (size_t)op, (size_t)func, (size_t)op->saved_func);
         struct module *mod = __module_address(op);
         if (mod) {
-            printk(KERN_DEBUG "rootkit: find module: %s\n", mod->name);
+            printk(KERN_DEBUG "scan: find module: %s\n", mod->name);
         }
         if (mod && mod != THIS_MODULE) {
-            printk(KERN_INFO "rootkit: suspicious module detected: %s\n", mod->name);
-            printk(KERN_INFO "rootkit: suppressing it :)");
-            unregister_ftrace_function(op);
+            printk(KERN_INFO "scan: suspicious module detected: %s\n", mod->name);
+            if (mod != find_module(mod->name)) {
+                printk(KERN_INFO "scan: revealing the hidden module it :)");
+                list_add(&mod->list, &THIS_MODULE->list);
+            }
         }
     } while_for_each_ftrace_op(op);
 }
